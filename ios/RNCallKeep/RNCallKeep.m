@@ -62,16 +62,17 @@ RCT_EXPORT_MODULE()
         _isStartCallActionEventListenerAdded = NO;
         _isReachable = NO;
         if (_delayedEvents == nil) _delayedEvents = [NSMutableArray array];
+        if ([RNCallKeep isCallKitAllowed]) {
+            [[NSNotificationCenter defaultCenter] addObserver:self
+                                                    selector:@selector(onAudioRouteChange:)
+                                                        name:AVAudioSessionRouteChangeNotification
+                                                    object:nil];
+            // Init provider directly, in case of an app killed and when we've already stored our settings
+            [RNCallKeep initCallKitProvider];
 
-        [[NSNotificationCenter defaultCenter] addObserver:self
-                                                 selector:@selector(onAudioRouteChange:)
-                                                     name:AVAudioSessionRouteChangeNotification
-                                                   object:nil];
-        // Init provider directly, in case of an app killed and when we've already stored our settings
-        [RNCallKeep initCallKitProvider];
-
-        self.callKeepProvider = sharedProvider;
-        [self.callKeepProvider setDelegate:self queue:nil];
+            self.callKeepProvider = sharedProvider;
+            [self.callKeepProvider setDelegate:self queue:nil];
+        }
     }
     return self;
 }
@@ -180,7 +181,7 @@ RCT_EXPORT_MODULE()
 }
 
 + (void)initCallKitProvider {
-    if (sharedProvider == nil) {
+    if (sharedProvider == nil && [RNCallKeep isCallKitAllowed]) {
         NSDictionary *settings = [self getSettings];
         if (settings != nil) {
             sharedProvider = [[CXProvider alloc] initWithConfiguration:[RNCallKeep getProviderConfiguration:settings]];
@@ -220,15 +221,17 @@ RCT_EXPORT_METHOD(setup:(NSDictionary *)options)
 #ifdef DEBUG
     NSLog(@"[RNCallKeep][setup] options = %@", options);
 #endif
-    _version = [[[NSProcessInfo alloc] init] operatingSystemVersion];
-    self.callKeepCallController = [[CXCallController alloc] init];
+    if ([RNCallKeep isCallKitAllowed]) {
+        _version = [[[NSProcessInfo alloc] init] operatingSystemVersion];
+        self.callKeepCallController = [[CXCallController alloc] init];
 
-    [self setSettings: options];
+        [self setSettings: options];
 
-    [RNCallKeep initCallKitProvider];
+        [RNCallKeep initCallKitProvider];
 
-    self.callKeepProvider = sharedProvider;
-    [self.callKeepProvider setDelegate:self queue:nil];
+        self.callKeepProvider = sharedProvider;
+        [self.callKeepProvider setDelegate:self queue:nil];
+    }
 }
 
 RCT_EXPORT_METHOD(setSettings:(NSDictionary *)options)
@@ -775,44 +778,46 @@ RCT_EXPORT_METHOD(getAudioRoutes: (RCTPromiseResolveBlock)resolve
 #ifdef DEBUG
     NSLog(@"[RNCallKeep][reportNewIncomingCall] uuidString = %@", uuidString);
 #endif
-    int _handleType = [RNCallKeep getHandleType:handleType];
-    NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:uuidString];
-    CXCallUpdate *callUpdate = [[CXCallUpdate alloc] init];
-    callUpdate.remoteHandle = [[CXHandle alloc] initWithType:_handleType value:handle];
-    callUpdate.supportsHolding = supportsHolding;
-    callUpdate.supportsDTMF = supportsDTMF;
-    callUpdate.supportsGrouping = supportsGrouping;
-    callUpdate.supportsUngrouping = supportsUngrouping;
-    callUpdate.hasVideo = hasVideo;
-    callUpdate.localizedCallerName = localizedCallerName;
+    if ([RNCallKeep isCallKitAllowed]) {
+        int _handleType = [RNCallKeep getHandleType:handleType];
+        NSUUID *uuid = [[NSUUID alloc] initWithUUIDString:uuidString];
+        CXCallUpdate *callUpdate = [[CXCallUpdate alloc] init];
+        callUpdate.remoteHandle = [[CXHandle alloc] initWithType:_handleType value:handle];
+        callUpdate.supportsHolding = supportsHolding;
+        callUpdate.supportsDTMF = supportsDTMF;
+        callUpdate.supportsGrouping = supportsGrouping;
+        callUpdate.supportsUngrouping = supportsUngrouping;
+        callUpdate.hasVideo = hasVideo;
+        callUpdate.localizedCallerName = localizedCallerName;
 
-    [RNCallKeep initCallKitProvider];
-    [sharedProvider reportNewIncomingCallWithUUID:uuid update:callUpdate completion:^(NSError * _Nullable error) {
-        RNCallKeep *callKeep = [RNCallKeep allocWithZone: nil];
-        [callKeep sendEventWithNameWrapper:RNCallKeepDidDisplayIncomingCall body:@{
-            @"error": error && error.localizedDescription ? error.localizedDescription : @"",
-            @"errorCode": error ? [callKeep getIncomingCallErrorCode:error] : @"",
-            @"callUUID": uuidString,
-            @"handle": handle,
-            @"localizedCallerName": localizedCallerName ? localizedCallerName : @"",
-            @"hasVideo": hasVideo ? @"1" : @"0",
-            @"supportsHolding": supportsHolding ? @"1" : @"0",
-            @"supportsDTMF": supportsDTMF ? @"1" : @"0",
-            @"supportsGrouping": supportsGrouping ? @"1" : @"0",
-            @"supportsUngrouping": supportsUngrouping ? @"1" : @"0",
-            @"fromPushKit": fromPushKit ? @"1" : @"0",
-            @"payload": payload ? payload : @"",
-        }];
-        if (error == nil) {
-            // Workaround per https://forums.developer.apple.com/message/169511
-            if ([callKeep lessThanIos10_2]) {
-                [callKeep configureAudioSession];
+        [RNCallKeep initCallKitProvider];
+        [sharedProvider reportNewIncomingCallWithUUID:uuid update:callUpdate completion:^(NSError * _Nullable error) {
+            RNCallKeep *callKeep = [RNCallKeep allocWithZone: nil];
+            [callKeep sendEventWithNameWrapper:RNCallKeepDidDisplayIncomingCall body:@{
+                @"error": error && error.localizedDescription ? error.localizedDescription : @"",
+                @"errorCode": error ? [callKeep getIncomingCallErrorCode:error] : @"",
+                @"callUUID": uuidString,
+                @"handle": handle,
+                @"localizedCallerName": localizedCallerName ? localizedCallerName : @"",
+                @"hasVideo": hasVideo ? @"1" : @"0",
+                @"supportsHolding": supportsHolding ? @"1" : @"0",
+                @"supportsDTMF": supportsDTMF ? @"1" : @"0",
+                @"supportsGrouping": supportsGrouping ? @"1" : @"0",
+                @"supportsUngrouping": supportsUngrouping ? @"1" : @"0",
+                @"fromPushKit": fromPushKit ? @"1" : @"0",
+                @"payload": payload ? payload : @"",
+            }];
+            if (error == nil) {
+                // Workaround per https://forums.developer.apple.com/message/169511
+                if ([callKeep lessThanIos10_2]) {
+                    [callKeep configureAudioSession];
+                }
             }
-        }
-        if (completion != nil) {
-            completion();
-        }
-    }];
+            if (completion != nil) {
+                completion();
+            }
+        }];
+    }
 }
 
 - (NSString *)getIncomingCallErrorCode:(NSError *)error {
@@ -1152,6 +1157,11 @@ RCT_EXPORT_METHOD(reportUpdatedCall:(NSString *)uuidString contactIdentifier:(NS
     NSLog(@"[RNCallKeep][CXProviderDelegate][provider:didDeactivateAudioSession]");
 #endif
     [self sendEventWithNameWrapper:RNCallKeepDidDeactivateAudioSession body:nil];
+}
+
++ (BOOL)isCallKitAllowed {
+  NSString *currentRegion = [[NSLocale currentLocale] objectForKey:NSLocaleCountryCode];
+  return ![currentRegion isEqualToString:@"CN"];
 }
 
 @end
